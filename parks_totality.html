@@ -1,0 +1,223 @@
+
+<head>
+    <script src="https://d3js.org/d3.v7.js"></script> 
+    <script src= "https://d3js.org/d3-geo-projection.v2.min.js"> </script> 
+	<script src='https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.0.1/spin.min.js'></script> 
+</head>
+<body>
+<div id="content">
+<div id="spinner"></div>
+<h4 id="loadingMessage" style="font-size: 24px;font-family: sans-serif;position:absolute;left:190px;top:150px;height:12px;color:#01ade2">Loading Eclipse Data</h4>
+</div>
+</body>
+
+<style>
+
+.tooltip {
+  font-family:sans-serif;
+  border: 1px solid #ccc;
+  font-size: 12px;
+  position: absolute;
+  background: #eeeeeeee;
+}
+
+#spinner {
+	width: 100px;
+	height: 100px;
+	top: 210px;
+	left: 270px;
+	position: absolute;
+}
+
+</style>
+
+<script>
+var opts = {
+  animation: 'spinner-line-shrink',
+  lines: 9, // The number of lines to draw
+  length: 9, // The length of each line
+  width: 5, // The line thickness
+  radius: 14, // The radius of the inner circle
+  color: '#01ade2', // #rgb or #rrggbb or array of colors
+  speed: 1.9, // Rounds per second
+  trail: 40, // Afterglow percentage
+  className: 'spinner', // The CSS class to assign to the spinner
+};
+var loadingSpinner = document.getElementById('spinner');
+var spinner = new Spinner(opts).spin();
+loadingSpinner.appendChild(spinner.el);
+
+loadingMessage = document.getElementById('loadingMessage');
+
+
+const width = 800,
+	  height = 500;
+
+Promise.all([
+    d3.json('https://ironanalytics-storage.s3.amazonaws.com/eclipse-2024/states.json'),
+    d3.json('https://ironanalytics-storage.s3.amazonaws.com/eclipse-2024/eclipse-2024-parks.json'),
+	d3.json('https://ironanalytics-storage.s3.amazonaws.com/eclipse-2024/eclipse-2024-path.json')
+]).then(
+		function([states, parks, path])
+			{
+			spinner.stop();
+			loadingSpinner.remove();
+			loadingMessage.remove()
+
+			// SETUP SVG
+			let container = d3.select("#content"),
+				svg = container.append("svg")
+							.attr('width', width)
+							.attr('height', height),
+			// SETUP D3 GEO PROJECTOR
+			projection = d3.geoAlbers()
+							.center([-40, 40])
+							.scale( 1000 )
+							.translate([-300,80]),
+
+				geo_path = d3.geoPath()
+							.projection(projection),
+			// empty g element that will contain state polygons
+				state = svg.append( "g" ),
+			// empty g element that will contain eclipse path polygon
+			    eclipse = svg.append( "g" ),
+			// empty g element that will contain the park polygons
+				park = svg.append("g")
+			// empty div that will display the tooltip data
+			    tooltip = container.append("div").attr("class", "tooltip");
+
+			// Plot state polygons and set styling
+			state
+				.selectAll( "path" )
+				.data( states.features )
+				.enter()
+				.append( "path" )
+				.attr( "fill", "#ccc" )
+				.attr( "stroke", "#333")
+				.attr( "d", geo_path )
+				.style('pointer-events', 'none');
+
+			// Plot eclipse path and set styling
+			eclipse
+				.selectAll( "path" )
+				.data( path.features )
+				.enter()
+				.append( "path" )
+				.attr( "fill", "yellow" )
+				.attr( "stroke", "black" )
+				.attr( "opacity", '0.4')
+				.attr( "stroke-width", '3')
+				.attr( "d", geo_path )
+				.style('pointer-events', 'none');
+
+			// Plot park polygons and set styling
+			park
+				.selectAll("path")
+				.data(parks.features)
+				.enter()
+				.append("path")
+				.attr("fill", 'green')
+				.attr('properties', (d) => d.properties)
+				.attr("stroke", "black")
+				.attr("d", geo_path)
+				.attr('class', 'park')
+				.attr( "stroke-width", '0.1')
+				.style('pointer-events', 'auto')
+				// Generate tooltip display via mouse events
+				.on("mouseover", function(e, d) {
+					/*
+					When the mouse enters the polygon,
+							1. Change the html to display the polygon data
+							2. Raise the tooltip above other polygons
+							3. Display the tooltip
+							4. Set the polygon's border to red and increase the border width
+					*/
+					
+					// 1
+					tooltip.html(`<b>${d.properties.NAME}</b></br>
+								  <b>Nearest Municipality:</b> ${d.properties.nearest_city}</br>
+								  <b>Eclipse Time:</b> ${d.properties.eclipse_time}</b></br>
+								  </br>
+								  <i>Click to open in google maps!</i>`
+								);
+
+					// 2
+					tooltip.raise();
+
+					// 3
+					tooltip.style('display', null);
+
+					// 4
+					d3.select(this)
+						.attr("stroke", "red")
+						.attr("stroke-width", '1')
+						.raise();
+					})
+					/*
+					When the mouse moves, change the location of the tooltip
+					so it is location to below and to the right of the cursor
+					*/
+					.on("mousemove", function(e, d) {
+						var coords = d3.pointer(e);
+						var xPos = coords[0] + 10;
+						var yPos = coords[1] + 20;
+						tooltip
+						.style("left", xPos + "px")
+						.style("top", yPos + "px")
+					
+					})
+					/*
+					When the mouse exits a polygon
+						- Hide the tooltip
+						- Lower the tooltip behind other polygons
+						- Return the polygon to default styling
+					*/
+					.on("mouseout", function() {
+						tooltip.style('display', "none");
+						tooltip.lower();
+						d3
+						.select(this)
+						.attr("fill", 'green')
+						.attr('properties', (d) => d.properties)
+						.attr("stroke", "black")
+						.attr("d", geo_path)
+						.attr('class', 'park')
+						.attr( "stroke-width", '0.1');
+					})
+					/*
+					When a polygon is clicked, open the google maps link for the park's coordinates
+					*/
+					.on('click', function(e, d) {
+					window.open(d.properties.park_gmaps_link, "_blank")
+					});
+				
+				// Setup zoom
+				const zoom = d3.zoom()
+					.scaleExtent([1, Infinity]) // Zoom limits
+					.translateExtent([[0, 0], [width, height]])
+					.filter(function(event) {
+						event.preventDefault();
+						return (!event.ctrlKey || event.type === 'wheel') && !event.button;
+				})
+				.on('zoom', function(event) {
+						svg.selectAll('path').attr('transform', event.transform);
+				})
+			
+			container
+			.append("i")
+			.style('font-size', '24px')
+            .style('left', '100px')
+            .style('top', '480px')
+            .style('position', 'absolute')
+			.html('</br>Hover over parks for more info</br>Scroll to zoom!')
+
+
+			svg.call(zoom);
+
+			
+
+
+			}
+		) 
+</script>
+
